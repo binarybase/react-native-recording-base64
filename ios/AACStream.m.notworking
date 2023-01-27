@@ -1,0 +1,131 @@
+
+    /*_recordState.mTargetDataFormat.mFormatID           = kAudioFormatMPEG4AAC;
+    _recordState.mTargetDataFormat.mSampleRate         = 44100;
+    _recordState.mTargetDataFormat.mFormatFlags        =  0;
+    _recordState.mTargetDataFormat.mFramesPerPacket    =  1024;
+    _recordState.mTargetDataFormat.mBitsPerChannel     =  0;
+    _recordState.mTargetDataFormat.mBytesPerPacket     =  0;
+    _recordState.mTargetDataFormat.mBytesPerFrame      =  0;
+    _recordState.mTargetDataFormat.mReserved           =  0;
+    _recordState.mTargetDataFormat.mChannelsPerFrame = _recordState.mDataFormat.mChannelsPerFrame;*/
+
+	    // encode linear PCM data into AAC
+    convertPCMToAAC(inBuffer, pRecordState);
+
+	// dealloc
+	    AudioConverterDispose(_recordState.encodeConvertRef);
+
+
+
+- (bool) initConverter {
+    OSStatus status;
+    RCTLogInfo(@"%s initializing converter", kModule);
+
+    // converter descriptions
+    AudioStreamBasicDescription source = _recordState.mDataFormat;
+    AudioStreamBasicDescription target = _recordState.mTargetDataFormat;
+
+    // retrieve rest of format info
+    UInt32 size = sizeof(target);
+    AudioFormatGetProperty(kAudioFormatProperty_FormatInfo, 0, NULL, &size, &target);
+
+    // select encoding
+    AudioClassDescription audioClassDesc;
+    AudioFormatGetPropertyInfo(kAudioFormatProperty_Encoders, sizeof(target.mFormatID), &target.mFormatID, &size);
+    UInt32 numEncoders = size / sizeof(AudioClassDescription);
+    // retrieve encoders
+    AudioClassDescription audioClassArr[numEncoders];
+    AudioFormatGetProperty(kAudioFormatProperty_Encoders, sizeof(target.mFormatID), &target.mFormatID, &size, audioClassArr);
+    // select encoder
+    for(int i = 0; i < numEncoders; i++){
+        if(audioClassArr[i].mSubType == kAudioFormatMPEG4AAC && audioClassArr[i].mManufacturer == kAppleSoftwareAudioCodecManufacturer){
+            memcpy(&audioClassDesc, &audioClassArr[i], sizeof(AudioClassDescription));
+            break;
+        }
+    }
+
+    // create audioConverter reference
+    status = AudioConverterNewSpecific(&source, &target, 1, &audioClassDesc, &_recordState.encodeConvertRef);
+    if(status != noErr){
+        RCTLog(@"%s Failed to create audioConverter with status %i", kModule, status);
+        return false;
+    }
+    // select input stream
+    size = sizeof(source);
+    AudioConverterGetProperty(_recordState.encodeConvertRef, kAudioConverterCurrentInputStreamDescription, &size, &source);
+    // select output stream
+    size = sizeof(target);
+    AudioConverterGetProperty(_recordState.encodeConvertRef, kAudioConverterCurrentOutputStreamDescription, &size, &target);
+    // setup bitrate
+    UInt32 bitRate = 64000;
+    size = sizeof(bitRate);
+    AudioConverterSetProperty(_recordState.encodeConvertRef, kAudioConverterEncodeBitRate, size, &bitRate);
+
+    return true;
+}
+
+OSStatus encodeConverterComplexInputDataProc(
+    AudioConverterRef              inAudioConverter,
+    UInt32                         *ioNumberDataPackets,
+    AudioBufferList                *ioData,
+    AudioStreamPacketDescription   **outDataPacketDescription,
+    void                           *inUserData
+) {
+    ioData->mBuffers[0].mData           = inUserData;
+    ioData->mBuffers[0].mNumberChannels = 1;
+    ioData->mBuffers[0].mDataByteSize   = kBufferSize * 2;
+    
+    return 0;
+}
+
+void convertPCMToAAC (AudioQueueBufferRef inBuffer, AQRecordState *pRecordState) {
+    UInt32   maxPacketSize    = 0;
+    UInt32   size             = sizeof(maxPacketSize);
+    OSStatus status;
+    
+    status = AudioConverterGetProperty(
+        pRecordState->encodeConvertRef,
+        kAudioConverterPropertyMaximumOutputPacketSize,
+        &size,
+        &maxPacketSize
+    );
+
+    if(status != noErr){
+        RCTLog(@"%s Failed to get converter property with status %i", kModule, status);
+        return;
+    }
+    
+    AudioBufferList *bufferList             = (AudioBufferList *)malloc(sizeof(AudioBufferList));
+    bufferList->mNumberBuffers              = 1;
+    bufferList->mBuffers[0].mNumberChannels = pRecordState->mDataFormat.mChannelsPerFrame;
+    bufferList->mBuffers[0].mData           = malloc(maxPacketSize);
+    bufferList->mBuffers[0].mDataByteSize   = inBuffer->mAudioDataByteSize;
+    
+    AudioStreamPacketDescription outputPacketDescriptions;
+    
+    UInt32 inNumPackets = 1;
+    status = AudioConverterFillComplexBuffer(
+        pRecordState->encodeConvertRef,
+        encodeConverterComplexInputDataProc,
+        inBuffer->mAudioData,
+        &inNumPackets,
+        bufferList,
+        &outputPacketDescriptions
+    );
+
+    if(status != noErr){
+        RCTLog(@"%s Failed to fill converter buffer with status %i", kModule, status);
+        return;
+    }
+
+    // deliver AAC data to user
+    long nsamples = bufferList->mBuffers[0].mDataByteSize;
+
+    // copy AAC data into output buffer
+    [pRecordState->outBuffer appendBytes:bufferList->mBuffers[0].mData length:nsamples];
+    pRecordState->outBufferLen += nsamples;
+
+    // free up buffers
+    free(bufferList->mBuffers[0].mData);
+    free(bufferList);
+}
