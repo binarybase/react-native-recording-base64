@@ -69,7 +69,7 @@ const duration = performance.now() - start;
 // play from base64 encoded format (uLaw codec)
 RNLiveAudioStream.play(recordedBase64Data);
 // stop playing after duration
-setTimeout(() => RNLiveAudioStream.stop(), duration);
+setTimeout(() => RNLiveAudioStream.stopPlaying(), duration);
 
 
 // if you want to switch between phone's internal earpiece and speaker you can use fn setSpeaker()
