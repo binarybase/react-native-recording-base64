@@ -1,16 +1,24 @@
 
-# react-native-live-audio-stream
-[![npm](https://img.shields.io/npm/v/react-native-live-audio-stream)](https://www.npmjs.com/package/react-native-live-audio-stream)
+# react-native-recording-base64
 
-Get live audio stream data for React Native. Ideal for live voice recognition (transcribing).
+This module is modified from [react-native-live-audiostream](https://github.com/xiqi/react-native-live-audio-stream).
+Instead of saving to an audio file, it only records audio data using uLaw codec. Recorded data are stored in-memory and then returned as base64 encoded string.
+After sending over network you can easily play base64 encoded data again on the other side.
 
-This module is modified from [react-native-audio-record](https://github.com/goodatlas/react-native-audio-record). Instead of saving to an audio file, it only emit events with live data. By doing this, it can reduce memory usage and eliminate file operation overheads in the case that an audio file is not necessary (e.g. live transcribing).
+You have to only keep eye on recorded data size, with every second the buffer size is growing really fast, but not as fast like using linear PCM codec.
+For example 30 seconds of audio record are equal to ~500kbytes which is acceptable for transfer over network thanks to the uLaw codec.
+
+The additional support is for switching between phone's speaker and internal earpiece.
+
+It would be really better to encode it into AAC or other codec, i was trying to make an implementation, but due to time pressure i was not able to give it another hours to make it work.
+
+You can use this implementation like me for voice messages.
 
 Most of the code was written by the respective original authors.
 
 ## Install
 ```
-yarn add react-native-live-audio-stream
+npm i https://github.com/binarybase/react-native-recording-base64
 cd ios
 pod install
 ```
@@ -25,47 +33,54 @@ Add these lines to ```ios/[YOU_APP_NAME]/info.plist```
 ```
 
 ### Android
-Add the following line to ```android/app/src/main/AndroidManifest.xml```
-```xml
-<uses-permission android:name="android.permission.RECORD_AUDIO" />
-```
+Currently not supported
 
 ## Usage
 ```javascript
-import LiveAudioStream from 'react-native-live-audio-stream';
+import { NativeModules } from 'react-native';
+const { RNLiveAudioStream } = NativeModules;
 
-const options = {
-  sampleRate: 32000,  // default is 44100 but 32000 is adequate for accurate voice recognition
-  channels: 1,        // 1 or 2, default 1
-  bitsPerSample: 16,  // 8 or 16, default 16
-  audioSource: 6,     // android only (see below)
-  bufferSize: 4096    // default is 2048
-};
+// initialize library
+useEffect(() => {
+    RNLiveAudioStream.init({
+      // to record and play audio uLaw codec is used
+      sampleRate: 8000,
+      // bits per sample 8-bit
+      bitsPerSample: 8
+    });
+}, []);
 
-LiveAudioStream.init(options);
-LiveAudioStream.on('data', data => {
-  // base64-encoded audio data chunks
-});
-  ...
-LiveAudioStream.start();
-  ...
-LiveAudioStream.stop();
-  ...
-```
+// to record audio in base64 format
+const start = performance.now();
+try {
+  await RNLiveAudioStream.start();
+} catch(ex){
+  // handle errors like failed initialization of the audio buffer or sth else
+}
 
-`audioSource` should be one of the constant values from [here](https://developer.android.com/reference/android/media/MediaRecorder.AudioSource). Default value is `6` (`VOICE_RECOGNITION`).
+// stop and receive recording audio
+const recordedBase64Data = RNLiveAudioStream.stop();
+// store duration to know when to stop playback
+const duration = performance.now() - start;
 
-Use 3rd-party modules like [buffer](https://www.npmjs.com/package/buffer) to decode base64 data. Example:
-```javascript
-// yarn add buffer
-import { Buffer } from 'buffer';
-  ...
-LiveAudioStream.on('data', data => {
-  var chunk = Buffer.from(data, 'base64');
-});
+// send over network
+....
+
+// play from base64 encoded format (uLaw codec)
+RNLiveAudioStream.play(recordedBase64Data);
+// stop playing after duration
+setTimeout(() => RNLiveAudioStream.stop(), duration);
+
+
+// if you want to switch between phone's internal earpiece and speaker you can use fn setSpeaker()
+// switching can be also used while audio is playing
+// @param {bool} enabled (false = earpiece, true = speaker)
+RNLiveAudioStream.setSpeaker(true);
 ```
 
 ## Credits/References
+- [BleVOIP](https://github.com/JustinYangJing/BleVOIP)
+- [react-native-live-audio-stream](https://github.com/xiqi/react-native-live-audio-stream)
 - [react-native-audio-record](https://github.com/goodatlas/react-native-audio-record)
 - iOS [Audio Queues](https://developer.apple.com/library/content/documentation/MusicAudio/Conceptual/AudioQueueProgrammingGuide)
 - Android [AudioRecord](https://developer.android.com/reference/android/media/AudioRecord.html)
